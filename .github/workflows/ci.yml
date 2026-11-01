@@ -39,7 +39,7 @@ jobs:
       - name: Static checks
         run: |
           node --check server/static/app.js
-          python3 -m py_compile guest/rootfs/agent.py guest/rootfs/pg_ir_capture.py tools/vm_smoke.py
+          python3 -m py_compile guest/rootfs/agent.py guest/rootfs/pg_ir_capture.py tools/vm_smoke.py tools/release-notes.py
           for f in guest/kernel/build-kernel.sh guest/rootfs/build-rootfs.sh guest/rootfs/pg-init \
                    deploy/install.sh deploy/deploy.sh deploy/cloudflared-route.sh; do bash -n "$f"; done
           python3 -c 'import json; v = json.load(open("guest/versions.json")); assert sum(bool(x.get("default")) for x in v) == 1'
@@ -74,9 +74,11 @@ jobs:
       - name: Free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
 
-      - name: Cache guest kernel
+      # Restore/save separately so the kernel is cached as soon as it is built,
+      # even if a later step fails (actions/cache only saves on job success).
+      - name: Restore guest kernel
         id: kernel-cache
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: guest/out/vmlinux*
           key: kernel-x86_64-${{ hashFiles('guest/kernel/**') }}
@@ -84,6 +86,13 @@ jobs:
       - name: Build guest kernel
         if: steps.kernel-cache.outputs.cache-hit != 'true'
         run: make kernel
+
+      - name: Save guest kernel
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: guest/out/vmlinux*
+          key: ${{ steps.kernel-cache.outputs.cache-primary-key }}
 
       - name: Build rootfs images
         run: |
@@ -129,13 +138,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="v$(date -u +%Y.%m.%d)-${{ github.run_number }}"
-          {
-            echo "Deploy with \`deploy/deploy.sh <host> $tag\`."
-            echo
-            echo "| Version | pythonbpf | pylibbpf |"
-            echo "|---|---|---|"
-            for m in guest/out/images/*/meta.json; do
-              python3 -c 'import json, sys, os; m = json.load(open(sys.argv[1])); print(f"| {m[\"label\"]}{\" (default)\" if m.get(\"default\") else \"\"} | {m[\"pythonbpf\"]} | {m[\"pylibbpf\"]} |")' "$m"
-            done
-          } > notes.md
+          python3 tools/release-notes.py "$tag" guest/out/images/*/meta.json > notes.md
           gh release create "$tag" dist/pythonbpf-playground-x86_64.tar.zst --title "$tag" --notes-file notes.md --target "$GITHUB_SHA"
