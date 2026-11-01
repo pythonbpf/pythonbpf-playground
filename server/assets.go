@@ -76,6 +76,8 @@ func loadAssets(fsys fs.FS) (*assets, error) {
 			ctype = "text/plain; charset=utf-8"
 		case ".json":
 			ctype = "application/json"
+		case ".ico": // not in Go's built-in table; don't depend on /etc/mime.types
+			ctype = "image/x-icon"
 		}
 		if ctype == "" {
 			ctype = "application/octet-stream"
@@ -98,7 +100,7 @@ func loadAssets(fsys fs.FS) (*assets, error) {
 
 func compressible(ctype string) bool {
 	return strings.HasPrefix(ctype, "text/") || strings.Contains(ctype, "javascript") ||
-		strings.Contains(ctype, "json") || strings.Contains(ctype, "svg")
+		strings.Contains(ctype, "json") || strings.Contains(ctype, "svg") || ctype == "image/x-icon"
 }
 
 func (a *assets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
