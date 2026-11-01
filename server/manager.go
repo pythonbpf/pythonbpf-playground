@@ -44,8 +44,9 @@ type Client interface {
 }
 
 type Session struct {
-	ip string
-	c  Client
+	ip    string
+	c     Client
+	image string // playground version this session runs
 
 	state      State
 	slot       int
@@ -93,6 +94,10 @@ type Manager struct {
 	waitAgent func(sock string, timeout time.Duration, cancel <-chan struct{}) (net.Conn, *bufio.Reader, Hello, error)
 	dialPty   func(sock string) (net.Conn, error)
 
+	images    []Image // available playground versions (fixed at startup)
+	defImage  string
+	imagesMsg []byte // pre-encoded {"t":"images",...} sent to every new tab
+
 	mu       sync.Mutex
 	sessions map[*Session]struct{}
 	slots    []*Session
@@ -104,8 +109,15 @@ type Manager struct {
 	lastStat [3]int // last broadcast status (busy, slots, waiting)
 }
 
-func NewManager(cfg Config, l Launcher) *Manager {
+func NewManager(cfg Config, l Launcher, images []Image) *Manager {
+	if len(images) == 0 {
+		images = []Image{{ID: "default", Label: "default", Default: true}}
+	}
+	msg, _ := json.Marshal(map[string]any{"t": "images", "images": images, "default": defaultImage(images)})
 	return &Manager{
+		images:    images,
+		defImage:  defaultImage(images),
+		imagesMsg: msg,
 		cfg:       cfg,
 		l:         l,
 		now:       time.Now,
@@ -125,8 +137,9 @@ func NewManager(cfg Config, l Launcher) *Manager {
 func (m *Manager) Connect(c Client, ip string) *Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := &Session{ip: ip, c: c, slot: -1}
+	s := &Session{ip: ip, c: c, slot: -1, image: m.defImage}
 	m.sessions[s] = struct{}{}
+	c.SendText(m.imagesMsg)
 	c.SendJSON(m.statusLocked())
 	return s
 }
@@ -172,6 +185,35 @@ func (m *Manager) Run(s *Session, code string) {
 		m.acquireLocked(s)
 	default: // waiting or booting: run as soon as the VM is up
 		s.pendingRun = &code
+	}
+}
+
+// SetImage picks the playground version for this session. With a VM already
+// running, it is rebooted with the new version in the same slot (no requeue).
+func (m *Manager) SetImage(s *Session, id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	known := false
+	for _, img := range m.images {
+		known = known || img.ID == id
+	}
+	if !known {
+		s.c.SendJSON(map[string]any{"t": "error", "msg": "Unknown playground version."})
+		return
+	}
+	if id == s.image {
+		return
+	}
+	s.image = id
+	if s.state == Ready || s.state == Booting {
+		m.touchLocked(s)
+		m.closeConnsLocked(s)
+		if !s.runUntil.IsZero() {
+			s.c.SendJSON(map[string]any{"t": "exit", "id": s.runID, "code": nil, "reason": "switched version"})
+			s.runUntil = time.Time{}
+		}
+		s.state = Booting
+		m.bootLocked(s)
 	}
 }
 
@@ -330,17 +372,17 @@ func waitedFor(s *Session, now time.Time) time.Duration {
 
 func (m *Manager) bootLocked(s *Session) {
 	s.gen++
-	gen, slot := s.gen, s.slot
+	gen, slot, image := s.gen, s.slot, s.image
 	cancel := make(chan struct{})
 	s.cancelBoot = cancel
-	s.c.SendJSON(map[string]any{"t": "booting"})
-	go m.boot(s, slot, gen, cancel)
+	s.c.SendJSON(map[string]any{"t": "booting", "image": image})
+	go m.boot(s, slot, gen, image, cancel)
 }
 
-func (m *Manager) boot(s *Session, slot, gen int, cancel chan struct{}) {
+func (m *Manager) boot(s *Session, slot, gen int, image string, cancel chan struct{}) {
 	t0 := time.Now()
 	m.slotOps[slot].Lock()
-	sock, err := m.l.Start(slot)
+	sock, err := m.l.Start(slot, image)
 	m.slotOps[slot].Unlock()
 
 	var conn net.Conn
@@ -363,12 +405,12 @@ func (m *Manager) boot(s *Session, slot, gen int, cancel chan struct{}) {
 		m.endLocked(s, "Sorry, the VM failed to start. Please try again.")
 		return
 	}
-	log.Printf("slot %d: VM ready in %s (kernel %s)", slot, time.Since(t0).Round(time.Millisecond), hello.Kernel)
+	log.Printf("slot %d: VM ready in %s (%s, pythonbpf %s)", slot, time.Since(t0).Round(time.Millisecond), image, hello.PythonBPF)
 	vm := &vmConn{conn: conn, r: r, sock: sock}
 	s.vm = vm
 	s.hello = hello
 	s.state = Ready
-	s.c.SendJSON(map[string]any{"t": "ready", "hello": hello, "deadline_ms": msOrZero(s.deadline)})
+	s.c.SendJSON(map[string]any{"t": "ready", "hello": hello, "image": image, "deadline_ms": msOrZero(s.deadline)})
 	go m.readCtrl(s, vm)
 	if s.pendingTerm != nil {
 		t := *s.pendingTerm

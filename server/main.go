@@ -51,7 +51,7 @@ func serve(args []string) {
 	launcherSock := fl.String("launcher", "/run/pythonbpf-playground/launcher.sock", "launcher daemon socket")
 	direct := fl.String("direct", "", "dev mode: path to a firecracker binary to run VMs directly (no jailer)")
 	kernel := fl.String("kernel", "guest/out/vmlinux", "dev mode: guest kernel")
-	rootfs := fl.String("rootfs", "guest/out/rootfs.squashfs", "dev mode: guest rootfs")
+	imagesDir := fl.String("images", "/opt/pythonbpf-playground/images", "playground versions: <dir>/<id>/rootfs.squashfs")
 	workDir := fl.String("workdir", "/tmp/pgd-dev", "dev mode: VM working directory")
 	mem := fl.Int("mem", 256, "dev mode: guest memory (MiB)")
 	slots := fl.Int("slots", 2, "concurrent microVMs")
@@ -66,14 +66,22 @@ func serve(args []string) {
 
 	var l Launcher = launcherClient{sock: *launcherSock}
 	if *direct != "" {
-		l = newDirectLauncher(*direct, *workDir, VMSpec{Kernel: abs(*kernel), Rootfs: abs(*rootfs), MemMiB: *mem, VCPUs: 1})
+		l = newDirectLauncher(*direct, *workDir, abs(*imagesDir), VMSpec{Kernel: abs(*kernel), MemMiB: *mem, VCPUs: 1})
 		log.Printf("dev mode: running firecracker directly (no jailer)")
+	}
+	images, err := loadImages(*imagesDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, img := range images {
+		log.Printf("version %q: %s (pythonbpf %s, pylibbpf %s)%s", img.ID, img.Label, img.PythonBPF, img.PyLibBPF,
+			map[bool]string{true: " [default]"}[img.Default])
 	}
 	m := NewManager(Config{
 		Slots: *slots, MaxQueue: *queue, IdleTimeout: *idle, HardCap: *hardCap, CapGrace: *grace,
 		RunTimeout: *runTimeout, BootTimeout: 45 * time.Second, MaxCode: 64 << 10,
 		PerIP: *perIP, MaxRestarts: 3,
-	}, l)
+	}, l, images)
 	go func() {
 		for range time.Tick(time.Second) {
 			m.Tick()
@@ -158,8 +166,8 @@ func launcher(args []string) {
 	jailer := fl.String("jailer", "/usr/local/bin/jailer", "jailer binary")
 	fc := fl.String("firecracker", "/usr/local/bin/firecracker", "firecracker binary")
 	kernel := fl.String("kernel", "/opt/pythonbpf-playground/vmlinux", "guest kernel")
-	rootfs := fl.String("rootfs", "/opt/pythonbpf-playground/rootfs.squashfs", "guest rootfs")
-	chroot := fl.String("chroot-base", "/srv/jailer", "jailer chroot base (same filesystem as kernel/rootfs)")
+	imagesDir := fl.String("images", "/opt/pythonbpf-playground/images", "playground versions: <dir>/<id>/rootfs.squashfs")
+	chroot := fl.String("chroot-base", "/srv/jailer", "jailer chroot base (same filesystem as kernel/images)")
 	netns := fl.String("netns", "/var/run/netns/pythonbpf-playground", "empty network namespace for VMs")
 	cgroup := fl.String("cgroup", "pythonbpf-playground", "parent cgroup (v2)")
 	// One full vCPU per VM; the low cpu.weight on their parent cgroup keeps the
@@ -182,7 +190,8 @@ func launcher(args []string) {
 	j := &jailerLauncher{
 		jailer: *jailer, firecracker: *fc, chrootBase: *chroot, netns: *netns,
 		parentCgroup: *cgroup, cpuMax: *cpuMax, sockGid: gid, procs: newProcTable(),
-		spec: VMSpec{Kernel: *kernel, Rootfs: *rootfs, MemMiB: *mem, VCPUs: 1},
+		imagesDir: *imagesDir,
+		spec:      VMSpec{Kernel: *kernel, MemMiB: *mem, VCPUs: 1},
 	}
 	for i := 0; i < *slots; i++ {
 		j.cleanup(i)

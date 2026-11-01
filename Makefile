@@ -1,6 +1,6 @@
 # PythonBPF playground
 #   make kernel    guest kernel   -> guest/out/vmlinux          (Docker)
-#   make rootfs    guest rootfs   -> guest/out/rootfs.squashfs  (Docker)
+#   make rootfs    guest rootfs per version -> guest/out/images/<id>/  (Docker; V=<id> for one)
 #   make pgd       server binary  -> server/pgd (static, linux/amd64)
 #   make test      unit tests
 #   make dev       run locally: firecracker straight from $FIRECRACKER, no jailer
@@ -15,7 +15,7 @@ kernel:
 	guest/kernel/build-kernel.sh
 
 rootfs:
-	guest/rootfs/build-rootfs.sh
+	guest/rootfs/build-rootfs.sh $(V)
 
 static-examples:
 	rm -rf server/static/examples
@@ -28,5 +28,5 @@ test: static-examples
 	cd server && go vet ./... && go test -race -count=1 ./...
 
 dev: pgd
-	server/pgd serve -direct $(FIRECRACKER) -kernel guest/out/vmlinux -rootfs guest/out/rootfs.squashfs \
+	server/pgd serve -direct $(FIRECRACKER) -kernel guest/out/vmlinux -images guest/out/images \
 	  -trust-cf=false -per-ip=false

@@ -47,12 +47,14 @@ func (c *fakeClient) last(t string) map[string]any {
 type fakeLauncher struct {
 	mu            sync.Mutex
 	starts, stops int
+	images        []string // image of each Start, in order
 }
 
-func (f *fakeLauncher) Start(slot int) (string, error) {
+func (f *fakeLauncher) Start(slot int, image string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.starts++
+	f.images = append(f.images, image)
 	return fmt.Sprintf("sock%d-%d", slot, f.starts), nil
 }
 
@@ -93,7 +95,7 @@ type harness struct {
 
 func newHarness(t *testing.T, cfg Config) *harness {
 	h := &harness{t: t, l: &fakeLauncher{}, clk: &clock{t: time.Unix(1_000_000, 0)}, agents: map[string]*fakeAgent{}}
-	h.m = NewManager(cfg, h.l)
+	h.m = NewManager(cfg, h.l, []Image{{ID: "master", Label: "master", Default: true}, {ID: "0.2.0", Label: "0.2.0"}})
 	h.m.now = h.clk.now
 	h.m.waitAgent = func(sock string, _ time.Duration, _ <-chan struct{}) (net.Conn, *bufio.Reader, Hello, error) {
 		host, guest := net.Pipe()
@@ -413,5 +415,30 @@ func TestETAOrdering(t *testing.T) {
 			t.Fatalf("ETAs must not decrease down the queue: %v then %v", prev, eta)
 		}
 		prev = eta
+	}
+}
+
+func TestVersionSelection(t *testing.T) {
+	h := newHarness(t, defaultCfg())
+	s, c := h.connect("1.1.1.1")
+	if c.last("images") == nil || c.last("images")["default"] != "master" {
+		t.Fatal("new tabs must be told the available versions")
+	}
+	h.m.SetImage(s, "../etc")
+	if c.last("error") == nil {
+		t.Fatal("unknown versions must be rejected")
+	}
+	h.m.SetImage(s, "0.2.0") // before acquiring: just remembered
+	h.m.Acquire(s)
+	h.waitState(s, Ready)
+	h.m.SetImage(s, "master") // while running: reboot in the same slot
+	h.waitState(s, Ready)
+	h.l.mu.Lock()
+	defer h.l.mu.Unlock()
+	if len(h.l.images) != 2 || h.l.images[0] != "0.2.0" || h.l.images[1] != "master" {
+		t.Fatalf("launcher saw images %v, want [0.2.0 master]", h.l.images)
+	}
+	if h.state(s) != Ready || s.slot != 0 {
+		t.Fatal("switching versions must keep the slot")
 	}
 }

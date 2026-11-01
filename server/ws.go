@@ -46,6 +46,7 @@ type clientMsg struct {
 	Code string `json:"code"`
 	Cols int    `json:"cols"`
 	Rows int    `json:"rows"`
+	ID   string `json:"id"` // version id for op "version"
 }
 
 func (srv *server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +112,8 @@ func (srv *server) handleWS(w http.ResponseWriter, r *http.Request) {
 			srv.m.OpenTerm(s, msg.Cols, msg.Rows)
 		case "resize":
 			srv.m.Resize(s, msg.Cols, msg.Rows)
+		case "version":
+			srv.m.SetImage(s, msg.ID)
 		case "active":
 			srv.m.Touch(s)
 		case "ping":

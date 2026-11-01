@@ -1,0 +1,17 @@
+[
+  {
+    "id": "master",
+    "label": "master",
+    "pythonbpf": "git:master",
+    "pylibbpf": "git:master",
+    "default": true,
+    "order": 0
+  },
+  {
+    "id": "0.2.0",
+    "label": "0.2.0",
+    "pythonbpf": "pypi:0.2.0",
+    "pylibbpf": "pypi:0.0.7",
+    "order": 1
+  }
+]

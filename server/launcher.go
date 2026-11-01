@@ -98,15 +98,20 @@ func (t *procTable) exited(slot int) <-chan struct{} {
 type directLauncher struct {
 	firecracker string
 	workDir     string
+	imagesDir   string
 	spec        VMSpec
 	procs       *procTable
 }
 
-func newDirectLauncher(fc, workDir string, spec VMSpec) *directLauncher {
-	return &directLauncher{firecracker: fc, workDir: workDir, spec: spec, procs: newProcTable()}
+func newDirectLauncher(fc, workDir, imagesDir string, spec VMSpec) *directLauncher {
+	return &directLauncher{firecracker: fc, workDir: workDir, imagesDir: imagesDir, spec: spec, procs: newProcTable()}
 }
 
-func (d *directLauncher) Start(slot int) (string, error) {
+func (d *directLauncher) Start(slot int, image string) (string, error) {
+	rootfs, err := imageRootfs(d.imagesDir, image)
+	if err != nil {
+		return "", err
+	}
 	d.procs.kill(slot)
 	dir := filepath.Join(d.workDir, fmt.Sprintf("slot%d", slot))
 	os.RemoveAll(dir)
@@ -115,7 +120,7 @@ func (d *directLauncher) Start(slot int) (string, error) {
 	}
 	sock := filepath.Join(dir, "v.sock")
 	cfg := filepath.Join(dir, "vm.json")
-	if err := os.WriteFile(cfg, firecrackerConfig(d.spec, d.spec.Kernel, d.spec.Rootfs, sock), 0o600); err != nil {
+	if err := os.WriteFile(cfg, firecrackerConfig(d.spec, d.spec.Kernel, rootfs, sock), 0o600); err != nil {
 		return "", err
 	}
 	cmd := exec.Command(d.firecracker, "--no-api", "--config-file", cfg, "--level", "Warning")
@@ -147,7 +152,8 @@ type jailerLauncher struct {
 	chrootBase          string // e.g. /srv/jailer
 	netns               string // e.g. /var/run/netns/pythonbpf-playground
 	parentCgroup        string
-	cpuMax              string // cgroup cpu.max, e.g. "50000 100000"
+	cpuMax              string // cgroup cpu.max, e.g. "100000 100000"
+	imagesDir           string // <id>/rootfs.squashfs per playground version
 	spec                VMSpec
 	sockGid             int // group that may connect to the vsock socket (pgd's group)
 	procs               *procTable
@@ -182,7 +188,11 @@ func (j *jailerLauncher) cleanup(slot int) {
 	}
 }
 
-func (j *jailerLauncher) Start(slot int) (string, error) {
+func (j *jailerLauncher) Start(slot int, image string) (string, error) {
+	rootfs, err := imageRootfs(j.imagesDir, image)
+	if err != nil {
+		return "", err
+	}
 	j.cleanup(slot)
 	uid, gid, err := j.slotUser(slot)
 	if err != nil {
@@ -197,7 +207,7 @@ func (j *jailerLauncher) Start(slot int) (string, error) {
 	if err := linkOrCopy(j.spec.Kernel, filepath.Join(root, "vmlinux")); err != nil {
 		return "", err
 	}
-	if err := linkOrCopy(j.spec.Rootfs, filepath.Join(root, "rootfs.squashfs")); err != nil {
+	if err := linkOrCopy(rootfs, filepath.Join(root, "rootfs.squashfs")); err != nil {
 		return "", err
 	}
 	cfg := firecrackerConfig(j.spec, "vmlinux", "rootfs.squashfs", "v.sock")
@@ -285,8 +295,9 @@ func linkOrCopy(src, dst string) error {
 
 // ---------------------------------------------------------------------------
 // Launcher daemon (root) <-> pgd (unprivileged) over a unix socket.
-// Protocol, one request per connection: "start N\n" -> "ok <path>\n" | "err <msg>\n"
-//                                        "stop N\n"  -> "ok\n"
+// Protocol, one request per connection: "start N <image>\n" -> "ok <path>\n" | "err <msg>\n"
+//                                        "stop N\n"          -> "ok\n"
+// <image> is checked against the images directory by the launcher itself.
 
 func serveLauncher(sockPath string, l Launcher, slots int, allowUID int, sockGid int) error {
 	os.Remove(sockPath)
@@ -311,14 +322,19 @@ func serveLauncher(sockPath string, l Launcher, slots int, allowUID int, sockGid
 				return
 			}
 			c.SetDeadline(time.Now().Add(5 * time.Second))
-			line, err := bufio.NewReader(io.LimitReader(c, 64)).ReadString('\n')
+			line, err := bufio.NewReader(io.LimitReader(c, 128)).ReadString('\n')
 			if err != nil {
 				return
 			}
 			c.SetDeadline(time.Now().Add(60 * time.Second))
-			var op string
-			var slot int
-			if n, _ := fmt.Sscanf(strings.TrimSpace(line), "%s %d", &op, &slot); n != 2 || slot < 0 || slot >= slots {
+			f := strings.Fields(line)
+			if len(f) < 2 {
+				fmt.Fprintf(c, "err bad request\n")
+				return
+			}
+			op := f[0]
+			slot, err := strconv.Atoi(f[1])
+			if err != nil || slot < 0 || slot >= slots || (op == "start") != (len(f) == 3) || len(f) > 3 {
 				fmt.Fprintf(c, "err bad request\n")
 				return
 			}
@@ -326,7 +342,7 @@ func serveLauncher(sockPath string, l Launcher, slots int, allowUID int, sockGid
 			defer slotLocks[slot].Unlock()
 			switch op {
 			case "start":
-				path, err := l.Start(slot)
+				path, err := l.Start(slot, f[2])
 				if err != nil {
 					log.Printf("slot %d: start failed: %v", slot, err)
 					fmt.Fprintf(c, "err %s\n", strings.ReplaceAll(err.Error(), "\n", " "))
@@ -386,8 +402,8 @@ func (lc launcherClient) call(req string) (string, error) {
 	return "", errors.New(strings.TrimPrefix(line, "err "))
 }
 
-func (lc launcherClient) Start(slot int) (string, error) {
-	return lc.call(fmt.Sprintf("start %d", slot))
+func (lc launcherClient) Start(slot int, image string) (string, error) {
+	return lc.call(fmt.Sprintf("start %d %s", slot, image))
 }
 
 func (lc launcherClient) Stop(slot int) error {

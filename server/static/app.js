@@ -33,6 +33,8 @@
   let reconnectDelay = 1000;
   let term = null, fit = null, termOpen = false;
   let lastActive = 0;
+  let version = null; // chosen playground version id (null until the server lists them)
+  let wantedVersion = null; // from a share link or localStorage, applied once the list arrives
 
   // ---------------------------------------------------------------- output
   const out = $("#output");
@@ -130,9 +132,16 @@
   // Messages sent while (re)connecting are held and flushed on open, so a
   // click right after page load or during a reconnect is never lost.
   let outbox = [];
+  function flushOutbox() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const pending = outbox;
+    outbox = [];
+    pending.forEach((m) => ws.send(JSON.stringify(m)));
+  }
   function send(obj) {
-    if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(obj)); return true; }
-    if (obj.op === "run" || obj.op === "term") {
+    const holdable = obj.op === "run" || obj.op === "term";
+    if (ws && ws.readyState === WebSocket.OPEN && (version || !holdable)) { ws.send(JSON.stringify(obj)); return true; }
+    if (holdable) {
       outbox = outbox.filter((m) => m.op !== obj.op);
       outbox.push(obj);
       return true;
@@ -145,9 +154,9 @@
     ws.binaryType = "arraybuffer";
     ws.onopen = () => {
       reconnectDelay = 1000;
-      const pending = outbox;
-      outbox = [];
-      pending.forEach((m) => ws.send(JSON.stringify(m)));
+      // Version first, so a held Run boots the right image. On the first
+      // connection the version list hasn't arrived yet: setVersions flushes.
+      if (version) { ws.send(JSON.stringify({ op: "version", id: version })); flushOutbox(); }
       renderChip();
     };
     ws.onclose = () => {
@@ -173,6 +182,9 @@
       case "status":
         globalStatus = m;
         break;
+      case "images":
+        setVersions(m.images, m.default);
+        break;
       case "queued":
         state = "waiting";
         queueInfo = m;
@@ -180,14 +192,18 @@
         break;
       case "booting":
         state = "booting";
-        notice("Starting your microVM…");
+        notice(`Starting your microVM (${labelOf(m.image)})…`);
         break;
       case "ready":
         state = "ready";
         deadline = m.deadline_ms || 0;
         dropNotice();
         if (m.hello) {
-          $("#versions").textContent = `pythonbpf ${m.hello.pythonbpf} · pylibbpf ${m.hello.pylibbpf} · Linux ${m.hello.kernel}`;
+          // Prefer the build's exact refs (e.g. master@b076ef4): a git build can
+          // report the same package version as the last release.
+          const v = versionList.find((x) => x.id === m.image) || {};
+          $("#versions").textContent =
+            `pythonbpf ${v.pythonbpf || m.hello.pythonbpf} · pylibbpf ${v.pylibbpf || m.hello.pylibbpf} · Linux ${m.hello.kernel}`;
         }
         break;
       case "lease":
@@ -239,6 +255,30 @@
         break;
     }
   }
+
+  // ---------------------------------------------------------------- versions
+  let versionList = [];
+  const labelOf = (id) => (versionList.find((v) => v.id === id) || { label: id || "default" }).label;
+  function setVersions(list, def) {
+    versionList = list;
+    const sel = $("#version");
+    sel.textContent = "";
+    for (const v of list) {
+      const detail = [v.pythonbpf && `pythonbpf ${v.pythonbpf}`, v.pylibbpf && `pylibbpf ${v.pylibbpf}`].filter(Boolean).join(" · ");
+      sel.appendChild(Object.assign(document.createElement("option"), { value: v.id, textContent: v.label, title: detail }));
+    }
+    const pick = [wantedVersion, store.get("pg-version"), def].find((id) => id && list.some((v) => v.id === id));
+    sel.value = pick;
+    sel.hidden = list.length < 2;
+    if (pick !== version) { version = pick; send({ op: "version", id: pick }); }
+    flushOutbox();
+  }
+  $("#version").addEventListener("change", (e) => {
+    version = e.target.value;
+    store.set("pg-version", version);
+    if (state === "ready" || state === "booting") sys(`[switching to ${labelOf(version)}: restarting your VM]`, "notice");
+    send({ op: "version", id: version });
+  });
 
   // ---------------------------------------------------------------- actions
   let initDone;
@@ -354,7 +394,8 @@
   $("#share").addEventListener("click", async () => {
     try {
       const packed = await pipe(new TextEncoder().encode(editor.getValue()), new CompressionStream("deflate-raw"));
-      const url = `${location.origin}/#code=${b64url(packed)}`;
+      const v = version ? `v=${encodeURIComponent(version)}&` : "";
+      const url = `${location.origin}/#${v}code=${b64url(packed)}`;
       history.replaceState(null, "", url);
       await navigator.clipboard.writeText(url);
       toast("Link copied to clipboard");
@@ -363,7 +404,10 @@
     }
   });
   async function codeFromHash() {
-    const m = location.hash.match(/^#code=([\w-]+)$/);
+    const params = new URLSearchParams(location.hash.slice(1));
+    if (params.get("v")) wantedVersion = params.get("v");
+    const code = params.get("code");
+    const m = code && code.match(/^([\w-]+)$/);
     if (!m) return null;
     try { return new TextDecoder().decode(await pipe(unb64url(m[1]), new DecompressionStream("deflate-raw"))); }
     catch { return null; }

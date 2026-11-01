@@ -19,7 +19,6 @@ const (
 // VMSpec is what every playground microVM looks like.
 type VMSpec struct {
 	Kernel string // absolute path on the host
-	Rootfs string // absolute path on the host
 	MemMiB int
 	VCPUs  int
 }
@@ -56,10 +55,11 @@ func firecrackerConfig(spec VMSpec, kernel, rootfs, vsock string) []byte {
 	return b
 }
 
-// Launcher starts and stops the microVM for a slot. Start returns the host
-// path of the VM's vsock unix socket once Firecracker is running.
+// Launcher starts and stops the microVM for a slot. Start boots the given
+// playground version (image id) and returns the host path of the VM's vsock
+// unix socket once Firecracker is running.
 type Launcher interface {
-	Start(slot int) (vsockPath string, err error)
+	Start(slot int, image string) (vsockPath string, err error)
 	Stop(slot int) error
 }
 
