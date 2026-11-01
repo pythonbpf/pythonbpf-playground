@@ -11,6 +11,9 @@
 # the newest 1.x release (or missing), that release's firecracker + jailer are
 # shipped too. A new major version is reported but not installed automatically.
 #
+# DRY_RUN=1 does everything except uploading and installing, and shows the
+# bundle that would be shipped.
+#
 # Needs locally: gh (logged in), ssh, rsync, curl, tar, zstd. On the host:
 # sudo (you will be asked for your password if needed).
 set -euo pipefail
@@ -72,6 +75,12 @@ else
 fi
 
 # ---- 3. ship and install ------------------------------------------------------
+if [ "${DRY_RUN:-0}" = 1 ]; then
+  say "dry run: would ship this bundle to $HOST"
+  (cd "$STAGE" && find . -type f -printf '%10s  %p\n' | sort -k2)
+  for m in "$STAGE"/images/*/meta.json; do echo "$(basename "$(dirname "$m")"): $(tr -d '\n ' < "$m")"; done
+  exit 0
+fi
 say "uploading to $HOST"
 rsync -az --delete --info=progress2 "$STAGE/" "$HOST:pg-deploy/"
 say "installing"
