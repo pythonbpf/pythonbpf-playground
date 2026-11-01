@@ -48,11 +48,21 @@ else
   [ "$WHAT" = latest ] && WHAT=$(gh release view -R "$REPO" --json tagName -q .tagName)
   say "release $WHAT"
   asset="pythonbpf-playground-$ARCH.tar.zst"
+  file="$CACHE/$WHAT/$asset"
   mkdir -p "$CACHE/$WHAT"
-  if [ ! -f "$CACHE/$WHAT/$asset" ]; then
-    gh release download "$WHAT" -R "$REPO" -p "$asset" -D "$CACHE/$WHAT"
+  # GitHub publishes each asset's sha256: never trust a cached or fresh file
+  # that does not match it (e.g. a download that was interrupted).
+  want=$(gh release view "$WHAT" -R "$REPO" --json assets \
+    -q ".assets[] | select(.name == \"$asset\") | .digest" | sed 's/^sha256://')
+  [ -n "$want" ] || { echo "release $WHAT has no $asset"; exit 1; }
+  have() { [ -f "$file" ] && [ "$(sha256sum "$file" | cut -d' ' -f1)" = "$want" ]; }
+  if ! have; then
+    rm -f "$file" "$file.part"
+    gh release download "$WHAT" -R "$REPO" -p "$asset" -O "$file.part"
+    mv "$file.part" "$file"
+    have || { rm -f "$file"; echo "checksum mismatch for $asset"; exit 1; }
   fi
-  tar -I zstd -xf "$CACHE/$WHAT/$asset" -C "$STAGE"
+  tar -I zstd -xf "$file" -C "$STAGE"
 fi
 echo "versions: $(cd "$STAGE/images" && ls | paste -sd ' ')"
 
