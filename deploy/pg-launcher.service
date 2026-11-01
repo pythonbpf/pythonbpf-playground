@@ -1,0 +1,23 @@
+[Unit]
+Description=PythonBPF playground: microVM launcher (root, jails Firecracker)
+Requires=pg-netns.service
+After=network.target pg-netns.service
+
+[Service]
+ExecStart=/opt/pythonbpf-playground/pgd launcher
+Restart=always
+RestartSec=2
+Environment=GOMEMLIMIT=16MiB
+RuntimeDirectory=pythonbpf-playground
+RuntimeDirectoryMode=0755
+# The jailer needs root (chroot, setuid, cgroups, netns). Keep the rest locked down.
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectClock=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

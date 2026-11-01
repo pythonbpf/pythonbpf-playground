@@ -1,0 +1,41 @@
+[Unit]
+Description=PythonBPF playground: web server and queue (unprivileged)
+Requires=pg-launcher.service
+After=pg-launcher.service
+
+[Service]
+User=playground
+Group=playground
+ExecStart=/opt/pythonbpf-playground/pgd serve -listen 127.0.0.1:8090
+Restart=always
+RestartSec=2
+# Small and snappy on a 1 GB host: soft Go heap limit, hard cgroup cap, and
+# CPU priority over the microVMs so the site never stalls while VMs are busy.
+Environment=GOMEMLIMIT=48MiB
+MemoryMax=128M
+CPUWeight=1000
+Nice=-5
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

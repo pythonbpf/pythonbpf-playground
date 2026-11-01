@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About · PythonBPF Playground</title>
+<link rel="icon" type="image/png" href="logo-light.png?v=dev">
+<link rel="stylesheet" href="style.css?v=dev">
+</head>
+<body class="page">
+<header class="bar">
+  <div class="group"><a href="/" class="btn">&larr; Back to the playground</a></div>
+  <div class="group right">
+    <a href="/" class="logo" aria-label="PythonBPF Playground">
+      <picture>
+        <source srcset="logo-dark.png?v=dev" media="(prefers-color-scheme: dark)">
+        <img src="logo-light.png?v=dev" alt="PythonBPF" width="120" height="40">
+      </picture>
+    </a>
+  </div>
+</header>
+<article class="doc">
+  <h1>PythonBPF Playground</h1>
+  <p class="muted">Write eBPF programs in Python and run them in a real Linux kernel from your browser.</p>
+
+  <h2>What is PythonBPF?</h2>
+  <p><a href="https://github.com/pythonbpf/Python-BPF">PythonBPF</a> compiles a subset of Python into
+  eBPF bytecode through LLVM, without BCC. Its companion library,
+  <a href="https://github.com/pythonbpf/pylibbpf">pylibbpf</a>, loads and attaches the programs and gives you their maps
+  from ordinary Python. The <a href="https://python-bpf.readthedocs.io/">documentation</a> covers the language.</p>
+
+  <h2>How it works</h2>
+  <p>When you press <b>Run</b>, you get your own <a href="https://firecracker-microvm.github.io/">Firecracker</a> microVM
+  with its own Linux kernel. Your program is compiled to LLVM IR (shown in the <b>LLVM IR</b> tab), checked by the
+  kernel's BPF verifier, loaded and attached. Its output streams back to the <b>Output</b> tab. The <b>Terminal</b> tab is a root
+  shell in the same VM, so try <code>bpftool prog list</code> while a program runs. Your last program is in
+  <code>/work/main.py</code>.</p>
+
+  <h2>Limits</h2>
+  <ul>
+    <li>Only two VMs run at a time. If both are taken, you wait in a first-come, first-served queue, and the page shows your position.</li>
+    <li>A session ends after 2 minutes without activity. Sessions have no time limit while nobody is waiting; once someone is, a session is capped at 10 minutes, with at least 2 minutes' notice.</li>
+    <li>Each run stops after 20 seconds and at most 256 KB of output.</li>
+    <li>The VM has no network access, and everything in it disappears when your session ends.</li>
+    <li>One session per visitor at a time.</li>
+  </ul>
+
+  <h2>Safety</h2>
+  <p>Programs run as root, but only inside the microVM. Each VM runs under Firecracker's jailer, which provides a chroot,
+  an unprivileged user, an empty network namespace, seccomp filters and cgroup CPU and memory limits. Its root filesystem is read-only.
+  If your program crashes the guest kernel, the VM restarts and nothing else is affected.</p>
+
+  <h2>Sharing</h2>
+  <p><b>Share</b> puts your code, compressed, into the link itself. The server does not store any code.</p>
+
+  <h2>Source</h2>
+  <p>The playground is open source:
+  <a href="https://github.com/pythonbpf/pythonbpf-playground">github.com/pythonbpf/pythonbpf-playground</a>.
+  Bug reports for the compiler go to <a href="https://github.com/pythonbpf/Python-BPF/issues">Python-BPF</a>.</p>
+</article>
+</body>
+</html>

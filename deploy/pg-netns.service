@@ -1,0 +1,14 @@
+[Unit]
+Description=PythonBPF playground: empty network namespace for the microVMs
+Before=pg-launcher.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Must run outside any sandbox: the netns bind mount has to exist in the host
+# mount namespace. `ip netns exec` really joins the netns, so it fails on a
+# stale/broken entry (a plain file left without its bind mount) -> recreate it.
+ExecStart=/bin/sh -c 'ip netns exec pythonbpf-playground true 2>/dev/null || { ip netns del pythonbpf-playground 2>/dev/null; ip netns add pythonbpf-playground; }'
+
+[Install]
+WantedBy=multi-user.target

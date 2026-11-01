@@ -1,0 +1,4 @@
+*
+!guest/out/vmlinux
+!guest/rootfs/
+!examples/

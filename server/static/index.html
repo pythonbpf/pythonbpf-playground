@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PythonBPF Playground</title>
+<meta name="description" content="Write eBPF programs in Python and run them in a real Linux kernel, right from your browser.">
+<link rel="icon" type="image/png" href="logo-light.png?v=dev">
+<link rel="stylesheet" href="vendor/codemirror.css?v=dev">
+<link rel="stylesheet" href="style.css?v=dev">
+</head>
+<body>
+<header class="bar">
+  <div class="group">
+    <button id="run" class="btn primary" title="Run (Ctrl+Enter)"><span class="run-icon"></span><span id="run-label">Run</span></button>
+    <select id="examples" class="btn" title="Examples" aria-label="Examples">
+      <option value="" disabled selected>Examples</option>
+    </select>
+    <button id="share" class="btn" title="Copy a link to this code">Share</button>
+  </div>
+  <div class="group right">
+    <span id="chip" class="chip" aria-live="polite"></span>
+    <a href="/" class="logo" aria-label="PythonBPF Playground">
+      <picture>
+        <source srcset="logo-dark.png?v=dev" media="(prefers-color-scheme: dark)">
+        <img src="logo-light.png?v=dev" alt="PythonBPF" width="120" height="40">
+      </picture>
+    </a>
+    <a href="/about" class="btn ghost">About</a>
+  </div>
+</header>
+
+<main id="main">
+  <div id="editor"></div>
+  <div id="splitter" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
+  <section id="panel">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="output" role="tab">Output</button>
+      <button class="tab" data-tab="ir" role="tab">LLVM IR</button>
+      <button class="tab" data-tab="terminal" role="tab">Terminal</button>
+      <span class="spacer"></span>
+      <span id="versions" class="muted small"></span>
+      <button id="end" class="btn ghost small" title="Give your VM to the next person" hidden>End session</button>
+    </nav>
+    <div class="pane active" id="pane-output"><pre id="output"></pre></div>
+    <div class="pane" id="pane-ir"><pre id="ir" class="muted-empty">Run a program to see the LLVM IR that PythonBPF generates.</pre></div>
+    <div class="pane" id="pane-terminal"><div id="terminal"></div></div>
+  </section>
+</main>
+
+<div id="toast" role="status"></div>
+
+<script src="vendor/codemirror.js?v=dev"></script>
+<script src="vendor/python.js?v=dev"></script>
+<script src="vendor/matchbrackets.js?v=dev"></script>
+<script src="app.js?v=dev"></script>
+</body>
+</html>
