@@ -3,12 +3,13 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestHTTPSRedirect(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
-	h := securityHeaders(ok, true)
+	h := securityHeaders(ok, true, "")
 	cases := []struct {
 		name, header, value string
 		code                int
@@ -40,8 +41,22 @@ func TestHTTPSRedirect(t *testing.T) {
 	r := httptest.NewRequest("GET", "http://x/", nil)
 	r.Header.Set("CF-Visitor", `{"scheme":"http"}`)
 	w := httptest.NewRecorder()
-	securityHeaders(ok, false).ServeHTTP(w, r)
+	securityHeaders(ok, false, "").ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Errorf("untrusted: code %d", w.Code)
+	}
+}
+
+func TestFrameAncestors(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	for in, want := range map[string]string{
+		"":                            "frame-ancestors 'none';",
+		"https://pythonbpf.github.io": "frame-ancestors https://pythonbpf.github.io;",
+	} {
+		w := httptest.NewRecorder()
+		securityHeaders(ok, false, in).ServeHTTP(w, httptest.NewRequest("GET", "http://x/", nil))
+		if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, want) {
+			t.Errorf("frame-ancestors %q: CSP %q lacks %q", in, csp, want)
+		}
 	}
 }

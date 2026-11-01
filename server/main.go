@@ -62,6 +62,8 @@ func serve(args []string) {
 	runTimeout := fl.Duration("run-timeout", 20*time.Second, "wall clock per run")
 	perIP := fl.Bool("per-ip", true, "one session per client IP")
 	trustCF := fl.Bool("trust-cf", true, "trust the CF-Connecting-IP header (listen on localhost only!)")
+	frameAncestors := fl.String("frame-ancestors", "https://pythonbpf.github.io",
+		"space-separated origins allowed to embed the playground in an iframe (CSP frame-ancestors); empty = none")
 	fl.Parse(args)
 
 	var l Launcher = launcherClient{sock: *launcherSock}
@@ -119,7 +121,7 @@ func serve(args []string) {
 	log.Printf("pgd serving on http://%s (%d slots, assets %s)", *listen, *slots, static.version)
 	hs := &http.Server{
 		Addr:              *listen,
-		Handler:           securityHeaders(mux, *trustCF),
+		Handler:           securityHeaders(mux, *trustCF, *frameAncestors),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Fatal(hs.ListenAndServe())
@@ -138,7 +140,12 @@ func visitorScheme(r *http.Request) string {
 	return strings.ToLower(r.Header.Get("X-Forwarded-Proto"))
 }
 
-func securityHeaders(h http.Handler, trustCF bool) http.Handler {
+func securityHeaders(h http.Handler, trustCF bool, frameAncestors string) http.Handler {
+	if frameAncestors = strings.TrimSpace(frameAncestors); frameAncestors == "" {
+		frameAncestors = "'none'"
+	}
+	csp := "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+		"img-src 'self' data:; connect-src 'self'; frame-ancestors " + frameAncestors + "; base-uri 'none'; form-action 'none'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hd := w.Header()
 		if trustCF {
@@ -151,8 +158,7 @@ func securityHeaders(h http.Handler, trustCF bool) http.Handler {
 				hd.Set("Strict-Transport-Security", "max-age=63072000")
 			}
 		}
-		hd.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
-			"img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+		hd.Set("Content-Security-Policy", csp)
 		hd.Set("X-Content-Type-Options", "nosniff")
 		hd.Set("Referrer-Policy", "no-referrer")
 		hd.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
